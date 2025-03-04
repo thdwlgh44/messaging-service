@@ -1,7 +1,9 @@
 package com.example.messaging_service.messaging.service;
 
 import com.example.messaging_service.messaging.entity.MessageLog;
+import com.example.messaging_service.messaging.model.UserEvent;
 import com.example.messaging_service.messaging.repository.MessageLogRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -15,16 +17,21 @@ import java.util.stream.Collectors;
 
 /*
 * Kafka 메시지 소비 및 DB 저장 (Batch 처리 + 병렬 처리 적용)
+* 사용자 이벤트 Redis 저장 기능 추가
 * */
 @Service
 public class KafkaConsumerService {
 
     private final MessageLogRepository messageLogRepository;
     private final Counter messageCounter;
+    private final RedisService redisService;
+    private final ObjectMapper objectMapper;
 
-    public KafkaConsumerService(MessageLogRepository messageLogRepository, MeterRegistry meterRegistry) {
+    public KafkaConsumerService(MessageLogRepository messageLogRepository, MeterRegistry meterRegistry, RedisService redisService, ObjectMapper objectMapper) {
         this.messageLogRepository = messageLogRepository;
         this.messageCounter = meterRegistry.counter("kafka.consumer.processed.messages"); // Kafka 메시지 처리량 카운터
+        this.redisService = redisService;
+        this.objectMapper = objectMapper;
     }
 
     //개별 메시지를 받도록 되어있으므로 Batch 처리를 지원하는 전용 팩토리 필요 (KafkaConfig.java)
@@ -56,5 +63,20 @@ public class KafkaConsumerService {
 
         // 수동 커밋 (오프셋 관리) - 중복 처리 방지
         ack.acknowledge();
+    }
+
+    // ✅ 사용자 이벤트 처리 (Redis 저장)
+    @KafkaListener(topics = "user-events", groupId = "messaging-group")
+    public void consumeUserEvent(String message) {
+        try {
+            UserEvent event = objectMapper.readValue(message, UserEvent.class);
+
+            if ("PRODUCT_VIEW".equals(event.getEventType())) {
+                redisService.saveUserViewedProduct(event.getUserId(), event.getProductId());
+                System.out.println("✅ Redis에 저장된 최근 본 상품: " + redisService.getUserViewedProducts(event.getUserId()));
+            }
+        } catch (Exception e) {
+            System.err.println("❌ JSON 변환 오류: " + e.getMessage());
+        }
     }
 }

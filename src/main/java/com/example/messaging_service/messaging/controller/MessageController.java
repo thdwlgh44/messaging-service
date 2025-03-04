@@ -1,9 +1,12 @@
 package com.example.messaging_service.messaging.controller;
 
+import com.example.messaging_service.alert.service.KakaoAlertService;
 import com.example.messaging_service.messaging.model.MessageRequest;
 import com.example.messaging_service.messaging.service.ActiveMQProducerService;
 import com.example.messaging_service.messaging.service.KafkaProducerService;
+import com.example.messaging_service.messaging.service.RecommendationService;
 import com.example.messaging_service.messaging.service.RedisService;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -16,11 +19,15 @@ public class MessageController {
     private final RedisService redisService;
     private final KafkaProducerService kafkaProducerService;
     private final ActiveMQProducerService activeMQProducerService;
+    private final RecommendationService recommendationService;
+    private final KakaoAlertService kakaoAlertService;
 
-    public MessageController(RedisService redisService, KafkaProducerService kafkaProducerService, ActiveMQProducerService activeMQProducerService) {
+    public MessageController(RedisService redisService, KafkaProducerService kafkaProducerService, ActiveMQProducerService activeMQProducerService, RecommendationService recommendationService, KakaoAlertService kakaoAlertService) {
         this.redisService = redisService;
         this.kafkaProducerService = kafkaProducerService;
         this.activeMQProducerService = activeMQProducerService;
+        this.recommendationService = recommendationService;
+        this.kakaoAlertService = kakaoAlertService;
     }
 
     // ✅ Kafka로 단일 메시지 전송 (중복 방지 + 캐싱 적용)
@@ -84,5 +91,13 @@ public class MessageController {
         activeMQProducerService.sendMessage(message);
 
         return "✅ 메시지가 ActiveMQ에 전송되었습니다.";
+    }
+
+    // ✅ AI 추천 메시지를 카카오 알림톡으로 전송
+    @PostMapping("/send/kakao/{userId}")
+    public ResponseEntity<String> sendKakaoMessage(@PathVariable String userId) {
+        String recommendation = recommendationService.generateRecommendation(userId);
+        kakaoAlertService.sendKakaoAlert(userId, recommendation);
+        return ResponseEntity.ok("✅ 카카오 알림톡 전송 완료: " + recommendation);
     }
 }

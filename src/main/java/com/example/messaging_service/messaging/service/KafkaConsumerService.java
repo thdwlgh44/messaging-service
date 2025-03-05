@@ -1,5 +1,7 @@
 package com.example.messaging_service.messaging.service;
 
+import com.example.messaging_service.chat.dto.ChatMessage;
+import com.example.messaging_service.chat.repository.ChatMessageRepository;
 import com.example.messaging_service.messaging.entity.MessageLog;
 import com.example.messaging_service.messaging.model.UserEvent;
 import com.example.messaging_service.messaging.repository.MessageLogRepository;
@@ -12,6 +14,7 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -26,12 +29,14 @@ public class KafkaConsumerService {
     private final Counter messageCounter;
     private final RedisService redisService;
     private final ObjectMapper objectMapper;
+    private final ChatMessageRepository chatMessageRepository;
 
-    public KafkaConsumerService(MessageLogRepository messageLogRepository, MeterRegistry meterRegistry, RedisService redisService, ObjectMapper objectMapper) {
+    public KafkaConsumerService(MessageLogRepository messageLogRepository, MeterRegistry meterRegistry, RedisService redisService, ObjectMapper objectMapper, ChatMessageRepository chatMessageRepository) {
         this.messageLogRepository = messageLogRepository;
         this.messageCounter = meterRegistry.counter("kafka.consumer.processed.messages"); // Kafka 메시지 처리량 카운터
         this.redisService = redisService;
         this.objectMapper = objectMapper;
+        this.chatMessageRepository = chatMessageRepository;
     }
 
     //개별 메시지를 받도록 되어있으므로 Batch 처리를 지원하는 전용 팩토리 필요 (KafkaConfig.java)
@@ -43,26 +48,42 @@ public class KafkaConsumerService {
 
         System.out.println("📥 Batch Received: " + records.size() + " messages");
 
-        List<MessageLog> logs = records.stream().map(record -> {
-            String[] parts = record.value().split(":");
-            MessageLog log = new MessageLog();
-            log.setType(parts[0]);
-            log.setRecipient(parts[1]);
-            log.setContent(parts[2]);
-            return log;
-        }).collect(Collectors.toList());
+        List<ChatMessage> chatMessages = records.stream()
+                .map(record -> parseMessage(record.value()))
+                .filter(msg -> msg != null) // ✅ JSON 변환 오류 방지
+                .collect(Collectors.toList());
 
-        // 한 번에 여러 개의 메시지를 받아 Bulk Insert
-        messageLogRepository.saveAll(logs);
+        try {
+            // ✅ DB에 메시지 저장 (Bulk Insert)
+            chatMessageRepository.saveAll(chatMessages);
 
-        // Kafka 메시지 처리량 카운터 증가
-        messageCounter.increment(records.size());
+            // ✅ Redis 캐싱 (최근 50개 메시지 저장)
+            chatMessages.forEach(msg -> redisService.saveRecentMessages(msg.getChatRoomId(), msg));
 
-        long endTime = System.currentTimeMillis(); // 처리 시간 측정 종료
-        System.out.println("✅ Batch 처리 시간: " + (endTime - startTime) + " ms");
+            // ✅ Kafka 메시지 처리량 카운터 증가
+            messageCounter.increment(records.size());
 
-        // 수동 커밋 (오프셋 관리) - 중복 처리 방지
-        ack.acknowledge();
+            long endTime = System.currentTimeMillis(); // ✅ 처리 시간 측정 종료
+            System.out.println("✅ Batch 처리 완료 (" + chatMessages.size() + "건) - " + (endTime - startTime) + " ms");
+
+            // ✅ 수동 커밋 (오프셋 관리) - 중복 처리 방지
+            ack.acknowledge();
+
+        } catch (Exception e) {
+            System.err.println("❌ DB 저장 오류: " + e.getMessage());
+        }
+    }
+
+    // ✅ JSON 메시지 변환 (split 대신 ObjectMapper 사용)
+    private ChatMessage parseMessage(String messageJson) {
+        try {
+            ChatMessage message = objectMapper.readValue(messageJson, ChatMessage.class);
+            message.setTimestamp(LocalDateTime.now()); // ✅ 타임스탬프 추가
+            return message;
+        } catch (Exception e) {
+            System.err.println("❌ JSON 변환 오류: " + e.getMessage());
+            return null;
+        }
     }
 
     // ✅ 사용자 이벤트 처리 (Redis 저장)
@@ -79,4 +100,5 @@ public class KafkaConsumerService {
             System.err.println("❌ JSON 변환 오류: " + e.getMessage());
         }
     }
+
 }

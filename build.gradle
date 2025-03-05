@@ -36,10 +36,13 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-web'
 	implementation 'org.springframework.ai:spring-ai-redis-store-spring-boot-starter'
 	implementation("org.springframework.kafka:spring-kafka")
+	implementation 'org.apache.kafka:kafka-streams'
 	implementation 'org.springframework.boot:spring-boot-starter-activemq'
 	implementation("org.apache.activemq:activemq-broker:5.17.0") // Embedded Broker 지원 추가
 	implementation 'javax.jms:javax.jms-api:2.0.1' // JMS API 추가
 	implementation 'io.micrometer:micrometer-registry-prometheus' // Prometheus + Micrometer 메트릭 수집
+	implementation 'org.springframework.boot:spring-boot-starter-websocket' //Websocket 및 stomp 지원
+//	implementation 'org.springframework.boot:spring-boot-starter-messaging' //메시징 기능(Kafka, activeMQ와 연동)
 	compileOnly 'org.projectlombok:lombok'
 	developmentOnly 'org.springframework.boot:spring-boot-devtools'
 	runtimeOnly 'com.mysql:mysql-connector-j'
